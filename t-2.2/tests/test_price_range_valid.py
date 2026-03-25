@@ -17,12 +17,12 @@ def test_valid_price_range(driver, base_url):
     page.set_price_range(min_price=min_price, max_price=max_price)
 
     all_prices = []
-    max_pages = 30
-    visited_pages = 0
+    deadline = time.time() + 120
+    timed_out = False
 
     while True:
-        visited_pages += 1
-        if visited_pages > max_pages:
+        if time.time() > deadline:
+            timed_out = True
             break
 
         prices = []
@@ -34,29 +34,37 @@ def test_valid_price_range(driver, base_url):
 
         all_prices.extend(prices)
 
+        next_buttons = driver.find_elements(By.XPATH, "//button[@aria-label='Следующая страница']")
+        if not next_buttons:
+            break
+
+        next_button = next_buttons[0]
+        if (
+            next_button.get_attribute("disabled")
+            or next_button.get_attribute("aria-disabled") == "true"
+        ):
+            break
+
+        old_body_text = driver.find_element(By.TAG_NAME, "body").text
+
+        WebDriverWait(driver, 5).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[@aria-label='Следующая страница']"))
+        ).click()
+
         try:
-            next_button = WebDriverWait(driver, 5).until(
-                EC.presence_of_element_located((By.XPATH, "//button[@aria-label='Следующая страница']"))
-            )
-
-            if (
-                next_button.get_attribute("disabled")
-                or next_button.get_attribute("aria-disabled") == "true"
-            ):
-                break
-
-            old_body_text = driver.find_element(By.TAG_NAME, "body").text
-
-            WebDriverWait(driver, 5).until(
-                EC.element_to_be_clickable((By.XPATH, "//button[@aria-label='Следующая страница']"))
-            ).click()
-
             WebDriverWait(driver, 5).until(
                 lambda d: d.find_element(By.TAG_NAME, "body").text != old_body_text
             )
+        except TimeoutException as exc:
+            raise AssertionError(
+                "BUG: После клика на следующую страницу контент не обновился "
+                "при проверке диапазона цен."
+            ) from exc
 
-        except TimeoutException:
-            break
+    assert not timed_out, (
+        "BUG: Тест превысил лимит 120 секунд при обходе страниц. "
+        "Возможна зацикленная пагинация или нестабильная загрузка данных."
+    )
 
     assert all_prices, (
         "BUG: После применения валидного диапазона цен (1000-50000) "
